@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Eye</title>
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden}
+body{display:flex;align-items:center;justify-content:center;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}
+canvas{display:block}
+#hint{position:fixed;bottom:calc(10px + env(safe-area-inset-bottom,0px));left:0;right:0;text-align:center;font:12px monospace;color:#888;opacity:.8;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hint">Preparing textures...</div>
+<script>
+const RAMP=" .'`^\",:;Il!i><~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
+const NR=RAMP.length-1, DUR=34;
+const cv=document.getElementById('cv'), ctx=cv.getContext('2d'), hint=document.getElementById('hint');
+const smooth=x=>x<=0?0:x>=1?1:x*x*(3-2*x);
+const lerp=(a,b,t)=>a+(b-a)*t;
+let R=0,G=0,B=0;
+const setc=(r,g,b)=>{R=r;G=g;B=b;};
+
+/* ---------- textures (tileable fbm noise) ---------- */
+const TS=256, tex=new Float32Array(TS*TS);
+function hash(i,j,s){let h=(i*374761393+j*668265263+s*1442695041)|0;h=Math.imul(h^(h>>>13),1274126177);return((h^(h>>>16))>>>0)/4294967295;}
+function vnoise(x,y,P,s){
+  const xi=Math.floor(x),yi=Math.floor(y),xf=x-xi,yf=y-yi;
+  const u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf);
+  const a=((xi%P)+P)%P,b=((xi+1)%P+P)%P,c=((yi%P)+P)%P,d=((yi+1)%P+P)%P;
+  return lerp(lerp(hash(a,c,s),hash(b,c,s),u),lerp(hash(a,d,s),hash(b,d,s),u),v);
+}
+for(let j=0;j<TS;j++)for(let i=0;i<TS;i++){
+  let v=0,amp=.5,P=6;
+  for(let o=0;o<4;o++){v+=amp*vnoise(i/TS*P,j/TS*P,P,o);amp*=.5;P*=2;}
+  tex[j*TS+i]=Math.min(1,v/.94);
+}
+function T(u,v){
+  const ix=((Math.floor(u*TS)%TS)+TS)%TS, iy=((Math.floor(v*TS)%TS)+TS)%TS;
+  return tex[iy*TS+ix];
+}
+
+/* ---------- layout ---------- */
+let cols,rows,CW,CH,unit,jit,sv,sc,dpr;
+function resize(){
+  dpr=Math.min(window.devicePixelRatio||1,2);
+  const W=innerWidth,H=innerHeight;
+  CW=Math.max(6,Math.round(W/150)); CH=Math.round(CW*1.9);
+  cols=Math.floor(W/CW); rows=Math.floor(H/CH);
+  cv.width=cols*CW*dpr; cv.height=rows*CH*dpr;
+  cv.style.width=cols*CW+'px'; cv.style.height=rows*CH+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  unit=Math.min(rows*CH/2,cols*CW/3);
+  jit=new Float32Array(cols*rows); sv=new Float32Array(cols*rows); sc=new Array(cols*rows);
+  for(let i=0;i<jit.length;i++)jit[i]=(Math.random()-.5)*5;
+}
+
+/* ---------- the eye ---------- */
+const EW=1.25, RI=0.62;
+function eyePixel(x,y,S){
+  const s=S.s,k=1-1/s;
+  const wx=x/s+S.gx*k, wy=y/s+S.gy*k;
+  const q=1-(wx*wx)/(EW*EW);
+  let inside=false,de;
+  if(q>0){
+    const qq=Math.pow(q,.8);
+    const yu=-.62*S.om*qq, yl=.42*Math.pow(S.om,.7)*qq;
+    if(wy>yu&&wy<yl){inside=true;de=Math.min(wy-yu,yl-wy);}
+    else de=Math.min(Math.abs(wy-yu),Math.abs(wy-yl));
+  } else de=.1+(-q)*.3;
+
+  if(!inside){            // skin
+    const n=T(wx*.3+.2,wy*.3);
+    const m=(.55+.8*n)*(.55+.45*smooth(de/.3));
+    setc(175*m,88*m,42*m); return;
+  }
+  const dx=wx-S.gx,dy=wy-S.gy,d=Math.sqrt(dx*dx+dy*dy);
+  const shade=.35+.65*Math.min(1,de/.22);
+  if(d<RI){
+    if(d<S.rp){setc(8,6,6);return;}
+    const f=T(Math.atan2(dy,dx)/6.2832*4,d*.5);
+    const u=(d/RI-S.rp/RI)/(1-S.rp/RI);
+    let r,g,b;
+    if(u<.5){const a=u/.5;r=lerp(255,235,a);g=lerp(205,125,a);b=lerp(80,25,a);}
+    else{const a=(u-.5)/.5;r=lerp(235,105,a);g=lerp(125,38,a);b=lerp(25,6,a);}
+    const m=(.5+f)*shade;
+    r*=m;g*=m;b*=m;
+    if(s<4){                // light reflection
+      const hx=wx-(S.gx-.2),hy=wy-(S.gy-.24),hd=Math.sqrt(hx*hx+hy*hy);
+      if(hd<.08){const a=(1-hd/.08)*Math.min(1,(4-s)/2);r+=(255-r)*a;g+=(255-g)*a;b+=(255-b)*a;}
+    }
+    setc(r,g,b); return;
+  }
+  const n2=T(wx*1.3+.5,wy*1.3);   // sclera
+  const m=.45+.55*Math.min(1,de/.3);
+  const cs=smooth((Math.abs(wx)/EW-.55)/.4);
+  let r=lerp(238,215,cs),g=lerp(228,120,cs),b=lerp(218,110,cs);
+  if(n2>.7){const a=(n2-.7)*2;g*=1-a*.4;b*=1-a*.4;}
+  setc(r*m,g*m,b*m);
+}
+
+/* ---------- the heart ---------- */
+function heartPixel(x,y,hs){
+  const hx=x/hs*1.15, hy=-y/hs*1.15+.1;
+  const a=hx*hx+hy*hy-1, f=a*a*a-hx*hx*hy*hy*hy;
+  if(f<0){
+    const d=Math.min(1,-f/.9), n=T(x*.5+3,y*.5);
+    let r,g,b;
+    if(d<.35){const a2=d/.35;r=lerp(230,255,a2);g=lerp(100,80,a2);b=lerp(40,150,a2);}
+    else{const a2=(d-.35)/.65;r=255;g=lerp(80,190,a2);b=lerp(150,225,a2);}
+    const m=.65+.5*n;
+    setc(r*m,g*m,b*m);
+  } else {const gl=Math.exp(-f*1.1)*.55;setc(150*gl,35*gl,90*gl);}
+}
+const easeBack=x=>{x=Math.min(1,Math.max(0,x));const c1=1.70158,c3=c1+1;return 1+c3*Math.pow(x-1,3)+c1*Math.pow(x-1,2);};
+
+/* ---------- stars ---------- */
+const NS=260, stars=[];
+for(let i=0;i<NS;i++)stars.push({x:(Math.random()*2-1)*1.8,y:(Math.random()*2-1)*1.8,z:Math.random(),p:Math.random()*6.28});
+function put(c,r,v,ch){
+  if(c<0||c>=cols||r<0||r>=rows)return;
+  const i=r*cols+c; if(v>sv[i]){sv[i]=v;sc[i]=ch;}
+}
+function drawStars(t,alpha){
+  sv.fill(0);
+  if(alpha<=0)return;
+  const ts=t-14.5;
+  for(const st of stars){
+    let z=((st.z-.07*ts)%1+1)%1; if(z<.03)continue;
+    const px=st.x/z*.45, py=st.y/z*.45;
+    const c=Math.floor((px*unit+cols*CW/2)/CW), r=Math.floor((py*unit+rows*CH/2)/CH);
+    let v=Math.pow(1-z,1.4)*(.75+.25*Math.sin(t*5+st.p))*alpha*1.5;
+    v=Math.min(1,v); if(v<.12)continue;
+    put(c,r,v,v>.75?'*':v>.4?'+':'.');
+    if(v>.5){
+      const L=1+Math.floor(v*3);
+      for(let k=1;k<=L;k++){put(c-k,r,v*(1-k/(L+1)),'-');put(c+k,r,v*(1-k/(L+1)),'-');}
+      for(let k=1;k<=Math.max(1,L>>1);k++){put(c,r-k,v*(1-k/(L+1)),'|');put(c,r+k,v*(1-k/(L+1)),'|');}
+    }
+  }
+}
+
+/* ---------- timeline ---------- */
+const BLINKS=[5.5,8.0], ZOOM0=10, ZOOM1=14.6, HEART0=20;
+function render(t){
+  const fade=smooth(t/.6)*(1-smooth(t-33));
+  const starA=smooth((t-14.5)/2.5);
+  drawStars(t,starA);
+
+  // eye state
+  let close=0;
+  for(const tb of BLINKS){const u=t-tb;if(u>0&&u<.1)close=Math.max(close,u/.1);else if(u>=.1&&u<.28)close=Math.max(close,1-(u-.1)/.18);}
+  const tg=Math.min(t,ZOOM0);
+  const tau=smooth((t-ZOOM0)/(ZOOM1-ZOOM0));
+  const S={
+    om:smooth((t-.6)/2.8)*(1-close),
+    gx:.10*Math.sin(tg*.55)+.05*Math.sin(tg*1.3), gy:.05*Math.sin(tg*.43),
+    rp:.21+.025*Math.sin(Math.min(t,ZOOM0)*1.9),
+    s:Math.exp(tau*Math.log(36))
+  };
+  const eyeOn=t<ZOOM1+.2;
+  let hs=0;
+  if(t>=HEART0){
+    const ht=t-HEART0, p=(ht%1.1)/1.1;
+    const pulse=ht<3?0:.06*(Math.exp(-Math.pow((p-.1)/.07,2))+.7*Math.exp(-Math.pow((p-.32)/.07,2)));
+    hs=.85*easeBack(ht/3)*(1+pulse);
+  }
+
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,cols*CW,rows*CH);
+  ctx.font=Math.round(CW*1.75)+'px monospace'; ctx.textBaseline='middle';
+  const hw=cols*CW/2, hh=rows*CH/2;
+  for(let r=0;r<rows;r++){
+    const y=((r+.5)*CH-hh)/unit;
+    for(let c=0;c<cols;c++){
+      const i=r*cols+c;
+      let ch;
+      if(sv[i]>0){
+        const v=Math.min(1,sv[i]*1.3)*fade*255|0;
+        ctx.fillStyle='rgb('+v+','+v+','+Math.min(255,v+10)+')';
+        ch=sc[i];
+      } else {
+        const x=((c+.5)*CW-hw)/unit;
+        R=G=B=0;
+        if(eyeOn)eyePixel(x,y,S);
+        else if(hs>.02)heartPixel(x,y,hs);
+        else continue;
+        const lum=(.299*R+.587*G+.114*B)/255;
+        let idx=Math.floor(lum*NR+jit[i]); idx=idx<0?0:idx>NR?NR:idx;
+        if(lum<.06||idx===0)continue;
+        const k=1.3*fade;
+        ctx.fillStyle='rgb('+Math.min(255,R*k|0)+','+Math.min(255,G*k|0)+','+Math.min(255,B*k|0)+')';
+        ch=RAMP[idx];
+      }
+      ctx.fillText(ch,c*CW,(r+.5)*CH);
+    }
+  }
+}
+
+/* ---------- run ---------- */
+resize(); addEventListener('resize',resize);
+let t0=performance.now(), last=0;
+function frame(now){
+  requestAnimationFrame(frame);
+  if(now-last<33)return; last=now;
+  render(((now-t0)/1000)%DUR);
+}
+addEventListener('click',()=>{t0=performance.now();});
+hint.textContent='tap to replay';
+setTimeout(()=>{hint.style.display='none';},4000);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
